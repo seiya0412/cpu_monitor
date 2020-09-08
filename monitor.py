@@ -38,6 +38,7 @@ if __name__ == "__main__":
   master = rospy.get_master()
 
   poll_period = rospy.get_param('~poll_period', 1.0)
+  enable_individual = rospy.get_param('~enable_individual', True)
 
   this_ip = os.environ.get("ROS_IP")
 
@@ -57,45 +58,46 @@ if __name__ == "__main__":
                                           UInt64, queue_size=20))
 
   while not rospy.is_shutdown():
-    for node in rosnode.get_node_names():
-      if node in node_map or node in ignored_nodes:
-        continue
+    if enable_individual:
+      for node in rosnode.get_node_names():
+        if node in node_map or node in ignored_nodes:
+          continue
 
-      node_api = rosnode.get_api_uri(master, node)[2]
-      if not node_api:
-        rospy.logerr("[cpu monitor] failed to get api of node %s (%s)" % (node, node_api))
-        continue
+        node_api = rosnode.get_api_uri(master, node)[2]
+        if not node_api:
+          rospy.logerr("[cpu monitor] failed to get api of node %s (%s)" % (node, node_api))
+          continue
 
-      ros_ip = node_api[7:] # strip http://
-      ros_ip = ros_ip.split(':')[0] # strip :<port>/
-      local_node = "localhost" in node_api or \
-                   "127.0.0.1" in node_api or \
-                   (this_ip is not None and this_ip == ros_ip) or \
-                   subprocess.check_output("hostname").strip() in node_api
-      if not local_node:
-        ignored_nodes.add(node)
-        rospy.loginfo("[cpu monitor] ignoring node %s with URI %s" % (node, node_api))
-        continue
+        ros_ip = node_api[7:] # strip http://
+        ros_ip = ros_ip.split(':')[0] # strip :<port>/
+        local_node = "localhost" in node_api or \
+                     "127.0.0.1" in node_api or \
+                     (this_ip is not None and this_ip == ros_ip) or \
+                     subprocess.check_output("hostname").strip() in node_api
+        if not local_node:
+          ignored_nodes.add(node)
+          rospy.loginfo("[cpu monitor] ignoring node %s with URI %s" % (node, node_api))
+          continue
 
-      try:
-        resp = ServerProxy(node_api).getPid('/NODEINFO')
-      except:
-        rospy.logerr("[cpu monitor] failed to get pid of node %s (api is %s)" % (node, node_api))
-      else:
         try:
-          pid = resp[2]
+          resp = ServerProxy(node_api).getPid('/NODEINFO')
         except:
-          rospy.logerr("[cpu monitor] failed to get pid for node %s from NODEINFO response: %s" % (node, resp))
+          rospy.logerr("[cpu monitor] failed to get pid of node %s (api is %s)" % (node, node_api))
         else:
-          node_map[node] = Node(name=node, pid=pid)
-          rospy.loginfo("[cpu monitor] adding new node %s" % node)
+          try:
+            pid = resp[2]
+          except:
+            rospy.logerr("[cpu monitor] failed to get pid for node %s from NODEINFO response: %s" % (node, resp))
+          else:
+            node_map[node] = Node(name=node, pid=pid)
+            rospy.loginfo("[cpu monitor] adding new node %s" % node)
 
-    for node_name, node in list(node_map.items()):
-      if node.alive():
-        node.publish()
-      else:
-        rospy.logwarn("[cpu monitor] lost node %s" % node_name)
-        del node_map[node_name]
+      for node_name, node in list(node_map.items()):
+        if node.alive():
+          node.publish()
+        else:
+          rospy.logwarn("[cpu monitor] lost node %s" % node_name)
+          del node_map[node_name]
 
     cpu_publish.publish(Float32(psutil.cpu_percent()))
 
